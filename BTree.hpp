@@ -22,8 +22,9 @@ private:
 	constexpr static short U=(sizeof(size_t)>sizeof(Value))?sizeof(size_t):sizeof(Value);
     constexpr static short V=(sizeof(size_t)>sizeof(Key))?sizeof(size_t):sizeof(Key);
     constexpr static size_t NODESIZE = (bufferSize - sizeof(char) - sizeof(short) - sizeof(size_t)*4) /(sizeof(Key)+U)*U;
-    constexpr static short M = NODESIZE/V;
-	constexpr static short L = NODESIZE/U;
+    //constexpr static size_t NODESIZE = 200;
+    constexpr static short M = NODESIZE/V-1;
+	constexpr static short L = NODESIZE/U-1;
 	struct dataInfo{
         //head: start of data link
         //tail: end of data link
@@ -784,8 +785,8 @@ public:
         iterator it=_find(key,flag);
        //traverse();
 		if (!flag)
-			throw index_out_of_bound();
-		//std::cout<<key<<' '<<*(((Value *)pres.data)+it.dataPos)<<'\n';
+			//throw index_out_of_bound();
+		std::cout<<key<<' '<<*(((Value *)pres.data)+it.dataPos)<<'\n';
         return *(((Value *)pres.data)+it.dataPos);
     }
     void traverse(){
