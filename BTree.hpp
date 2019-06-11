@@ -8,8 +8,7 @@
 #include<cstring>
 namespace sjtu
 {
-    std::fstream f;
-	int ID = 1;
+        int ID = 1;
 template <class Key, class Value, class Compare = std::less<Key>>
 class BTree
 {
@@ -20,9 +19,11 @@ private:
     //运行时除了常用的数据的常量和info，buffer，name及文件流对象f之外，其余变量全部位于文件中
     const static size_t MAX_FNAME=50;
     const static size_t bufferSize = 4096;
-	constexpr static size_t NODESIZE = (bufferSize - sizeof(char) - sizeof(short) - sizeof(size_t)*4) /(sizeof(Key)+sizeof(Value))*sizeof(Value);
-	constexpr static short M = NODESIZE/sizeof(Key);
-	constexpr static short L = NODESIZE/sizeof(Value);
+	constexpr static short U=(sizeof(size_t)>sizeof(Value))?sizeof(size_t):sizeof(Value);
+    constexpr static short V=(sizeof(size_t)>sizeof(Key))?sizeof(size_t):sizeof(Key);
+    constexpr static size_t NODESIZE = (bufferSize - sizeof(char) - sizeof(short) - sizeof(size_t)*4) /(sizeof(Key)+U)*U;
+    constexpr static short M = NODESIZE/V;
+	constexpr static short L = NODESIZE/U;
 	struct dataInfo{
         //head: start of data link
         //tail: end of data link
@@ -47,8 +48,10 @@ private:
     };
     //BufferManager
     char *buffer;
+    std::fstream f;
     node pres;
-    inline void setName(char *n){
+    inline void setName(char *n)
+    {
         if(strlen(n)>MAX_FNAME)
             throw invaild_file_name();
         char names[MAX_FNAME];
@@ -100,7 +103,7 @@ private:
     }
     inline void close(){
 		f.seekp(0, std::ios::beg);
-		short pos = 0;
+		int pos = 0;
 		memcpy(&(buffer[pos]), info.name, sizeof(char) * MAX_FNAME);
 		pos += sizeof(char) * (MAX_FNAME + 1);
 		memcpy(&(buffer[pos]), &info.size, sizeof(size_t));
@@ -113,15 +116,18 @@ private:
 		pos += sizeof(size_t);
 		memcpy(&(buffer[pos]), &info.eof, sizeof(size_t));
 		f.write(buffer, sizeof(info));
-        if(f.is_open())
-            f.close(); 
+		f.close();
     }
     inline void read(size_t pos){
         //read data from a specified node into buffer
+    if(f.good()){
         f.seekg(pos,std::ios::beg);
         f.read(buffer,sizeof(node));
         //copy data into node pres
         memcpy(&pres,buffer,sizeof(node));
+    }
+    else
+        throw index_out_of_bound();
     }
     inline void copy(const BTree &other){
         //封装的copy函数，实现文件操作
@@ -131,13 +137,14 @@ private:
 		std::fstream of;
 		of.open(other.info.name, std::ios::binary);
 		if (!of.good())throw Copy_File_Failure();
-        of.seekg(0,of.beg());
+        of.seekg(0,std::ios::beg);
         for(size_t i=0;i<=n+1;i++){
             of.read(buffer,sizeof(char) * M);
             f.write(buffer,sizeof(char)*M);//每次读入4K字节的数据并写入
         }
     }
     void insertIdx(pair<Key,size_t> _p,size_t block){
+
 		bool flag;
 		read(block);
         size_t par=pres.parent;
@@ -145,8 +152,8 @@ private:
 			short i = 0;
             while(pres.keys[i]<=_p.first&&i<pres.sz)
                 i++;
-			for (int j = pres.sz; j >= i; j--) {
-				if(j>0)pres.keys[j] = pres.keys[j - 1];
+			for (int j = pres.sz; j > i; j--) {
+				pres.keys[j] = pres.keys[j - 1];
 				((size_t *)pres.data)[j+1] = ((size_t *)pres.data)[j];
 			}
 			pres.keys[i] = _p.first;
@@ -154,7 +161,6 @@ private:
             pres.sz++;
 			memcpy(buffer,&pres,sizeof(node));
 			write(block);
-			
         }
         else{//this node is full
             pair<Key,size_t> __p=restrIdx(_p,block);
@@ -195,17 +201,16 @@ private:
         //insert k-p pair into idxnode and split it 
         //into halfs then return the k-p pair in the middle
         size_t next,p,s=M-1,pos=0;
-        read(idx);
+        //read(idx);
 		node tmp;
 		next = pres.next;
         memcpy(&tmp,buffer,sizeof(node));
         pres.sz=s/2;
-        f.seekg(0,std::ios::end);
-        p=f.tellg();
-        tmp.pos=pres.next=p;//A->B
-		while (pres.keys[pos] <= _p.first&&pos<pres.sz)pos++;
+        tmp.pos=pres.next=info.eof;//A->B
+		while (pres.keys[pos] <= _p.first&&pos<M-1)pos++;
 		for (int i = 0; i < s - s / 2; i++) tmp.keys[i] = tmp.keys[i + s / 2];
-		for (int i = 0; i <= s - s / 2; i++) ((size_t*)tmp.data)[i] = ((size_t*)tmp.data)[i + s / 2];
+		for (int i = 0; i <= s - s / 2; i++)
+		    ((size_t*)tmp.data)[i] = ((size_t*)tmp.data)[i + s / 2];
 		if (pos < s / 2) {
 			for (int i = s/2; i >pos; i--) {
 					pres.keys[i] = pres.keys[i - 1];
@@ -221,25 +226,31 @@ private:
         if(next){
             read(next);
             tmp.next=pres.pos;
-			pres.prev = p;
+			pres.prev = info.eof;
 			memcpy(buffer, &pres, sizeof(node));
             write(pres.pos);
         }
-		
         tmp.sz=s-s/2;
 		if (pos >= s / 2) {
-			for (int i = s-s / 2; i > pos-s+s/2; i--) {
-					tmp.keys[i] = tmp.keys[i - 1];
-					((size_t*)tmp.data)[i+1] = ((size_t*)tmp.data)[i];
-			}
-			tmp.keys[pos-s+s/2] = _p.first;
-			((size_t*)tmp.data)[pos-s+s/2+1] = _p.second;
+            for (int i = s - s / 2; i >= pos + s / 2 - s && i > 0; i--) {
+                tmp.keys[i] = tmp.keys[i - 1];
+                ((size_t *) tmp.data)[i + 1] = ((size_t *) tmp.data)[i];
+
+            }
+            tmp.keys[pos  + s / 2 - s] = _p.first;
+            ((size_t *) tmp.data)[pos + 1 + s / 2 - s] = _p.second;
             tmp.sz++;
         }
+		for(int i=1;i<=tmp.sz;i++){
+		    read(((size_t *) tmp.data)[i]);
+		    pres.parent=tmp.pos;
+		    memcpy(buffer,&pres,sizeof(node));
+		    write(pres.pos);
+		}
 		pair<Key, size_t> pa(tmp.keys[0], tmp.pos);
         memcpy(buffer,&tmp,sizeof(node));
 		memcpy(&pres, &tmp, sizeof(node));
-        write(p);
+        write(info.eof);
         info.eof+=bufferSize;
         //this function doesn't change parent node
         return pa;
@@ -252,9 +263,7 @@ private:
 		next = pres.next;
         memcpy(&tmp,buffer,sizeof(node));
         pres.sz=s/2;
-        f.seekg(0,std::ios::end);
-        p=f.tellg();
-        tmp.pos=pres.next=p;//A->B
+        tmp.pos=pres.next=info.eof;//A->B
 		for (int i = 0; i < s - s / 2; i++) tmp.keys[i] = tmp.keys[i + s / 2];
 		for (int i = 0; i < s - s / 2; i++) ((Value*)tmp.data)[i] = ((Value*)tmp.data)[i + s / 2];
 		if (pos < s / 2) {
@@ -321,14 +330,12 @@ private:
     }
     iterator _find(const Key &key, bool &flag){
         short l,r,mid,ans=0;
-		bool flag2 = true;
         read(info.root);
         size_t pos=info.root;
         while(pres.nodeType){
 			if (key >= pres.keys[pres.sz - 1])
 			{
 					pos = *((size_t*)pres.data + pres.sz);
-					flag2 = false;
 					read(pos);
 					continue;
 			}
@@ -425,7 +432,7 @@ public:
             iterator tmp=*this;
             tree->read(blockPos);
             if(dataPos==tree->pres.sz-1){
-                tree->read(pres.next);//read next node
+                tree->read(tree->pres.next);//read next node
                 blockPos =tree->pres.pos;
                 dataPos = 0;
                 blockSize=tree->pres.sz;
@@ -448,7 +455,7 @@ public:
             iterator tmp=*this;
             tree->read(blockPos);
             if(dataPos==0){
-                read(tree->pres.prev);//read next node
+                tree->read(tree->pres.prev);//read next node
                 blockPos = tree->pres.pos;
                 blockSize = tree->pres.sz;
                 dataPos = tree->pres.sz - 1;
@@ -518,7 +525,7 @@ public:
         const_iterator(const const_iterator &other)
         {
             blockPos = other.blockPos;
-            blockSize=pres.sz;
+            blockSize=other.blockPos;
             dataPos=other.dataPos;
         }
         const_iterator(const iterator &other)
@@ -556,7 +563,7 @@ public:
             const_iterator tmp=*this;
             tree->read(blockPos);
             if(dataPos==0){
-                read(tree->pres.prev); //read next node
+                tree->read(tree->pres.prev); //read next node
                 blockPos = tree->pres.pos;
                 blockSize = tree->pres.sz;
                 dataPos = tree->pres.sz - 1;
@@ -646,7 +653,8 @@ public:
     // Return a pair, the first of the pair is the iterator point to the new
     // element, the second of the pair is Success if it is successfully inserted
     pair<iterator, OperationResult> insert(const Key &key, const Value &value)
-    {  
+    {
+        static int cnt=0;
         if(info.size==0){
 			info.size++; 
 			read(info.root);
@@ -668,7 +676,8 @@ public:
             if(!flag){
                 //avoid inserting an element with the same key
                 if(ins.blockSize<L){
-                     //node is availble
+
+                    //node is availble
 					for (int i = pres.sz; i > ins.dataPos; i--) {
 						pres.keys[i] = pres.keys[i - 1];
 						((Value*)pres.data)[i] = ((Value*)pres.data)[i - 1];
@@ -684,15 +693,16 @@ public:
                 else{//need to split leaf
                     size_t par=pres.parent;
 					pair<Key, size_t> p=insertLeaf(value,key,ins.blockPos,ins.dataPos);
-					if (par) { 
-						insertIdx(p, par); 
+					if (par) {
+					    cnt++;
+						insertIdx(p, par);
+						//if(cnt<10)traverse();
 					}
 					else{
 						node tmp;
 						tmp.nodeType = '0';
 						tmp.sz = 1;
-						f.seekg(0, std::ios::end);
-						tmp.pos = f.tellg();
+						tmp.pos = info.eof;
 						tmp.prev = tmp.next = tmp.parent = 0;
 						tmp.keys[0] = p.first;
 						*((size_t*)tmp.data) =ins.blockPos;
@@ -709,8 +719,10 @@ public:
 						pres.parent = tmp.pos;
 						memcpy(buffer, &pres, sizeof(node));
 						write(p.second);
-					}
+                        //traverse();
+                    }
                     pair<iterator,OperationResult> _p(ins,Success);
+
                     return _p;
                 }
             }
@@ -719,7 +731,6 @@ public:
                 return p;
             }   
         }
-       
     }
     // Erase: Erase the Key-Value
     // Return Success if it is successfully erased
@@ -771,9 +782,38 @@ public:
     {
         bool flag;
         iterator it=_find(key,flag);
-		//if (!flag)
-			//throw index_out_of_bound();
+       //traverse();
+		if (!flag)
+			throw index_out_of_bound();
+		//std::cout<<key<<' '<<*(((Value *)pres.data)+it.dataPos)<<'\n';
         return *(((Value *)pres.data)+it.dataPos);
+    }
+    void traverse(){
+        traverse(info.root,true);
+    }
+    void traverse(size_t pos,bool flag) {
+        static int cnt1=0,cnt2=0;
+        if(flag){
+            cnt1=cnt2=0;
+            std::cout<<"____________________________\n";
+        }
+        read(pos);
+        if (pres.nodeType){
+            cnt1++;
+            std::cout<<"IDXnodeNo."<<cnt1<<"\nAddress: "<<pres.pos<<"\nParent: "
+            <<pres.parent<<"\nKeys: ";
+            for (int i = 0; i < pres.sz; i++)
+                std::cout << pres.keys[i] << ' ';
+            std::cout<<'\n'<<std::endl;
+            int size=pres.sz;
+            for(int i=0;i<=size;i++){
+                traverse(((size_t *)pres.data)[i], false);
+                read(pos);
+            }
+        }
+        else{
+
+        }
     }
     /**
          * Returns the number of elements with key
