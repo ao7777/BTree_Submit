@@ -826,9 +826,9 @@ public:
         bool flag;
         iterator it=_find(key,flag);
        //traverse();
-		if (!flag)
+		//if (!flag)
 			//throw index_out_of_bound();
-		std::cout<<key<<' '<<*(((Value *)pres.data)+it.dataPos)<<'\n';
+		//std::cout<<key<<' '<<*(((Value *)pres.data)+it.dataPos)<<'\n';
         return *(((Value *)pres.data)+it.dataPos);
     }
     void traverse(){
