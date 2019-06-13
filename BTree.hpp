@@ -19,6 +19,7 @@ private:
     //运行时除了常用的数据的常量和info，buffer，name及文件流对象f之外，其余变量全部位于文件中
     const static size_t MAX_FNAME=50;
     const static size_t bufferSize = 4096;
+    const static size_t fatSize=8388608;
 	constexpr static short U=(sizeof(size_t)>sizeof(Value))?sizeof(size_t):sizeof(Value);
     constexpr static short V=(sizeof(size_t)>sizeof(Key))?sizeof(size_t):sizeof(Key);
     constexpr static size_t NODESIZE = (bufferSize - sizeof(char) - sizeof(short) - sizeof(size_t)*4) /(sizeof(Key)+U)*U;
@@ -51,10 +52,11 @@ private:
     char *buffer;
     std::fstream f;
     node pres;
+    char *pagingPool;
     inline void setName(char *n)
     {
         if(strlen(n)>MAX_FNAME)
-            throw invaild_file_name();
+            throw index_out_of_bound();
         char names[MAX_FNAME];
         strcpy(names, n);
         strcpy(info.name, "FileNo_");
@@ -74,7 +76,7 @@ private:
                 f.flush();
                     }
             else {
-					throw Write_File_Failure();
+					throw index_out_of_bound();
                 }
         }
     
@@ -83,7 +85,7 @@ private:
         if(!f.good())
         f.open(info.name, std::ios::in|std::ios::out|std::ios::binary|std::ios::trunc);
         if(!f.good())
-        throw Open_File_Failure();
+        throw index_out_of_bound();
     }
     inline void initialize(){//将基本信息写入文件
         f.seekp(0,std::ios::beg); 
@@ -127,8 +129,7 @@ private:
         //copy data into node pres
         memcpy(&pres,buffer,sizeof(node));
     }
-    else
-        throw index_out_of_bound();
+        //throw index_out_of_bound();
     }
     inline void copy(const BTree &other){
         //封装的copy函数，实现文件操作
@@ -137,7 +138,7 @@ private:
         f.seekp(0);
 		std::fstream of;
 		of.open(other.info.name, std::ios::binary);
-		if (!of.good())throw Copy_File_Failure();
+		if (!of.good())throw index_out_of_bound();
         of.seekg(0,std::ios::beg);
         for(size_t i=0;i<=n+1;i++){
             of.read(buffer,sizeof(char) * M);
@@ -264,7 +265,7 @@ private:
 		next = pres.next;
         memcpy(&tmp,buffer,sizeof(node));
         pres.sz=s/2;
-        tmp.pos=pres.next=info.eof;//A->B
+        p=tmp.pos=pres.next=info.eof;//A->B
 		for (int i = 0; i < s - s / 2; i++) tmp.keys[i] = tmp.keys[i + s / 2];
 		for (int i = 0; i < s - s / 2; i++) ((Value*)tmp.data)[i] = ((Value*)tmp.data)[i + s / 2];
 		if (pos < s / 2) {
@@ -306,7 +307,7 @@ private:
         //this function doesn't change parent node
         return pa;
     }
-    void merge(size_t pos){
+    void mergeLeaf(size_t pos){
         //merge a node and the next node
         read(pos);//读入当前结点
         int n,sz,i=0;
@@ -328,6 +329,44 @@ private:
         write(pres.pos);
         }
         //this function doesn't change parent node
+    }
+    void mergeIdx(size_t pos1,size_t pos2){
+        read(pos2);
+        node tmp,tmp2;
+        memcpy(&tmp,buffer,sizeof(node));
+        read(pos1);
+        if(tmp.sz+pres.sz<=M-1) {
+            int siz = pres.sz;
+            for (int i = 0; i < tmp.sz; i++) {
+                pres.keys[i + pres.sz] = tmp.keys[i];
+                ((size_t *) pres.data)[i + 1 + pres.sz] = tmp.keys[i + 1];
+                pres.sz++;
+            }
+            memcpy(buffer, &pres, sizeof(node));
+            memcpy(&tmp2, &pres, sizeof(node));
+            write(pres.pos);
+            for (int i = 0; i < tmp.sz; i++) {
+                read(((size_t *) tmp2.data)[i + 1 + siz]);
+                pres.parent = pos1;
+                memcpy(buffer, &pres, sizeof(node));
+                write(pres.pos);
+            }
+            read(tmp2.parent);
+            int j = 0;
+            while (pres.keys[j] != tmp2.keys[0])j++;
+            while (j < pres.sz - 1) {
+                pres.keys[j] = pres.keys[j + 1];
+                ((size_t *) pres.data)[j + 1] = ((size_t *) pres.data)[j + 2];
+            }
+            pres.sz--;
+            write(pres.pos);
+            mergeIdx(pres.pos,pres.next);
+        }
+    }
+    void borrow(size_t pos){
+        read(pos);
+        node tmp;
+        //memcpy(&tmp,);
     }
     iterator _find(const Key &key, bool &flag){
         short l,r,mid,ans=0;
@@ -618,11 +657,13 @@ public:
         setName(names);
         ID++;
         buffer=new char[bufferSize];
+        pagingPool=new char[fatSize];
         build();
     }
     BTree(char *s){//预设文件名的构造函数
         setName(s);
         buffer=new char[bufferSize];
+        pagingPool=new char[fatSize];
         build();
     }
     BTree(const BTree &other)
@@ -631,6 +672,7 @@ public:
         setName(names);
         ID++;
         buffer=new char[bufferSize];
+        pagingPool=new char[fatSize];
         open();
         copy(other);
     }
