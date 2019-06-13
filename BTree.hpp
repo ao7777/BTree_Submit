@@ -24,8 +24,8 @@ private:
     constexpr static short V=(sizeof(size_t)>sizeof(Key))?sizeof(size_t):sizeof(Key);
     constexpr static size_t NODESIZE = (bufferSize - sizeof(char) - sizeof(short) - sizeof(size_t)*4) /(sizeof(Key)+U)*U;
     //constexpr static size_t NODESIZE = 200;
-    constexpr static short M = NODESIZE/V-1;
-	constexpr static short L = NODESIZE/U-1;
+    constexpr static short M = NODESIZE/U;
+	constexpr static short L = NODESIZE/U;
 	struct dataInfo{
         //head: start of data link
         //tail: end of data link
@@ -68,8 +68,8 @@ private:
             if(f.good()){
                 if(!pos)//write at the end of file by default
                 {
-                    f.seekg(0, std::ios::end);
-                    pos = f.tellg();
+                    pos=info.eof;
+                    info.eof += bufferSize;
                 }
                 f.seekp(pos);
                 f.write(buffer, bufferSize);
@@ -146,7 +146,6 @@ private:
         }
     }
     void insertIdx(pair<Key,size_t> _p,size_t block){
-
 		bool flag;
 		read(block);
         size_t par=pres.parent;
@@ -171,7 +170,6 @@ private:
                 tmp.nodeType='0';
                 tmp.sz=1;
                 tmp.pos=info.eof;
-                info.eof+=bufferSize;
                 tmp.prev=tmp.next=tmp.parent=0;
                 tmp.keys[0]=__p.first;
 				*((size_t*)tmp.data) = block;
@@ -225,7 +223,7 @@ private:
 		memcpy(buffer, &pres, sizeof(node));
         write(pres.pos); 
 		tmp.prev=idx;
-        if(next){
+        if(next<info.eof&&next){
             read(next);
             tmp.next=pres.pos;
 			pres.prev = info.eof;
@@ -252,8 +250,7 @@ private:
 		pair<Key, size_t> pa(tmp.keys[0], tmp.pos);
         memcpy(buffer,&tmp,sizeof(node));
 		memcpy(&pres, &tmp, sizeof(node));
-        write(info.eof);
-        info.eof+=bufferSize;
+        write();
         //this function doesn't change parent node
         return pa;
     }
@@ -280,7 +277,7 @@ private:
 		memcpy(buffer, &pres, sizeof(node));
         write(pres.pos); 
 		tmp.prev=n;
-        if(next){
+        if(next<info.eof&&next){
             read(next);
             tmp.next=pres.pos;
 			pres.prev = p;
@@ -301,9 +298,8 @@ private:
 		pair<Key, size_t> pa(tmp.keys[0], tmp.pos);
         memcpy(buffer,&tmp,sizeof(node));
 		memcpy(&pres, buffer, sizeof(node));
-		info.eof += bufferSize;
         write();
-		if (info.tail == n)info.tail = p;
+        if (info.tail == n)info.tail = p;
         //this function doesn't change parent node
         return pa;
     }
@@ -394,8 +390,10 @@ private:
 					else l=mid+1;
 			}
 			if (l == r)mid = l;
+			if(pres.nodeType){
 			pos=*((size_t *)pres.data+mid);
 			read(pos);
+			}
         }
         l=0;
         r=pres.sz-1;
@@ -427,7 +425,6 @@ private:
         info.eof = sizeof(dataInfo);
         node root;
         info.head=info.tail=info.root = root.pos=info.eof;
-        info.eof += bufferSize;
         root.nodeType = '\0';
         open();
         initialize();
@@ -480,7 +477,7 @@ public:
             else
                 dataPos++;
             tree->close();
-            return &tmp;
+            return tmp;
             // Todo iterator++
         }
         iterator &operator++()
@@ -521,6 +518,13 @@ public:
         }
         // Overloaded of operator '==' and '!='
         // Check whether the iterators are same
+        Value getValue(){
+            tree->read(blockPos);
+            if(!tree->pres.nodeType)
+                return ((Value *)(tree->pres.data))[dataPos];
+                else
+                    throw index_out_of_bound();
+        }
         bool operator==(const iterator &rhs) const
         {
             if(rhs.tree==tree)
@@ -697,7 +701,6 @@ public:
     // element, the second of the pair is Success if it is successfully inserted
     pair<iterator, OperationResult> insert(const Key &key, const Value &value)
     {
-        static int cnt=0;
         if(info.size==0){
 			info.size++; 
 			read(info.root);
@@ -719,7 +722,6 @@ public:
             if(!flag){
                 //avoid inserting an element with the same key
                 if(ins.blockSize<L){
-
                     //node is availble
 					for (int i = pres.sz; i > ins.dataPos; i--) {
 						pres.keys[i] = pres.keys[i - 1];
@@ -736,8 +738,7 @@ public:
                 else{//need to split leaf
                     size_t par=pres.parent;
 					pair<Key, size_t> p=insertLeaf(value,key,ins.blockPos,ins.dataPos);
-					if (par) {
-					    cnt++;
+					if (par<info.eof&&par>0) {
 						insertIdx(p, par);
 						//if(cnt<10)traverse();
 					}
@@ -752,9 +753,8 @@ public:
 						*((size_t*)tmp.data + 1) = p.second;
 						info.root = tmp.pos;
 						memcpy(buffer, &tmp, sizeof(node));
-						info.eof += bufferSize;
 						write();
-						read(ins.blockPos);
+                        read(ins.blockPos);
 						pres.parent = tmp.pos;
 						memcpy(buffer, &pres, sizeof(node));
 						write(ins.blockPos);
@@ -765,7 +765,6 @@ public:
                         //traverse();
                     }
                     pair<iterator,OperationResult> _p(ins,Success);
-
                     return _p;
                 }
             }
@@ -796,7 +795,7 @@ public:
         iterator it(pres.pos,pres.sz,0,this);
         return it;
     }
-    const_iterator cbegin() const {
+    const_iterator cbegin() {
         return begin();
     }
     // Return a iterator to the end(the next element after the last)
@@ -805,7 +804,7 @@ public:
         iterator it(pres.pos,pres.sz,pres.sz-1,this);
         return it;
     }
-    const_iterator cend() const {
+    const_iterator cend()  {
         return end();
     }
     // Check whether this BTree is empty
@@ -863,7 +862,7 @@ public:
          *   that compares equivalent to the specified argument,
          * The default method of check the equivalence is !(a < b || b > a)
          */
-    size_t count(const Key &key) const {
+    size_t count(const Key &key) {
         iterator it=find(key);
         if(it==end())return 0;
         else return 1;
